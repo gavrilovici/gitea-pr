@@ -49,6 +49,7 @@ test('the pane shows the branch PR with its checks', async ($, on) => {
   mock.clock(on)
   on('command.register', () => ({ value: { command: 'gitea-pr' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_, e) => {
@@ -74,6 +75,7 @@ test('a branch with no PR says so', async ($, on) => {
   mock.clock(on)
   on('command.register', () => ({ value: { command: 'gitea-pr' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_, e) => {
@@ -95,6 +97,7 @@ test('the session keeps its PR once the checkout is detached', async ($, on) => 
   mock.clock(on)
   on('command.register', () => ({ value: { command: 'gitea-pr' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_, e) => {
@@ -118,4 +121,26 @@ test('the session keeps its PR once the checkout is detached', async ($, on) => 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /All 1 checks passed/ }))?.text).toBe('All 1 checks passed')
   await ui.unmount()
+})
+
+test('/gitea-pr mini reopens the pane as a widget', async ($, on) => {
+  const opened: unknown[] = []
+  mock.clock(on)
+  on('command.register', () => ({ value: { command: 'gitea-pr' } }))
+  on('ui.open', (_, e) => {
+    opened.push(e.placement)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('process.run', () => out(0, 'master\n'))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ran = await $.command.run({ ...OPEN_CMD, args: 'mini' })
+
+  expect(ran.text).toBe('Gitea PR opened as a widget.')
+  // The kit's host has no widgets, and a surface without them drops `placement`
+  // before the open reaches a hook, so only the reopen itself is checked here.
+  expect(opened.length).toBe(1)
 })

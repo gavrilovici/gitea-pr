@@ -181,6 +181,15 @@ async function runMerge($: EngineInterface) {
   await refresh($)
 }
 
+// A surface reads `placement` only when it first shows a pane, so switching
+// between the full pane and the widget closes the pane and opens it again.
+async function reopen($: EngineInterface, asWidget: boolean) {
+  await $.ui.close({ id: PANE })
+  const now = await read($, view)
+  const title = now.kind === 'pr' ? `${TITLE} #${now.pr.number}` : TITLE
+  await $.ui.open(asWidget ? { id: PANE, title, placement: 'widget' } : { id: PANE, title })
+}
+
 function checkGlyph(state: string): { glyph: string; color: string } {
   switch (state) {
     case 'success':
@@ -255,6 +264,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'gitea-pr',
       description: 'Show the Gitea pull request of the current branch in a pane',
+      argumentHint: '[mini]',
     })
     timer?.cancel()
     // Every 15 s while checks are pending or a merge runs, else every minute.
@@ -273,10 +283,11 @@ export const register: Register = on => {
     return started
   })
 
-  on('command.run', { command: 'gitea-pr' }, async $ => {
-    await $.ui.open({ id: PANE, title: TITLE })
+  on('command.run', { command: 'gitea-pr' }, async ($, e) => {
+    const isMini = /^(mini|widget|min)$/i.test(e.args.trim())
+    await reopen($, isMini)
     await refresh($)
-    return { text: 'Gitea PR pane opened.' }
+    return { text: isMini ? 'Gitea PR opened as a widget.' : 'Gitea PR pane opened.' }
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
@@ -399,6 +410,9 @@ export const register: Register = on => {
         <Box flexDirection="row" gap={1} flexWrap="wrap">
           <Link href={pr.url} label="Open in Gitea" />
           {refreshButton}
+          <Button key="minimize" onPress={() => void reopen($, true)}>
+            Minimize
+          </Button>
           {canMerge && merging.kind !== 'confirm' && merging.kind !== 'running' && (
             <Button key="merge" variant="primary" onPress={() => void update($, merge, () => ({ kind: 'confirm' }) as GiteaMerge)}>
               Merge…
