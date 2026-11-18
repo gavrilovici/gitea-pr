@@ -342,7 +342,11 @@ export const register: Register = on => {
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
           <Text bold>
-            <Link href={pr.url}>{pr.title}</Link> <Text dimColor>#{pr.number}</Text>
+            <Link href={pr.url}>
+              <Text color="text" bold>
+                {pr.title}
+              </Text>
+            </Link> <Text dimColor>#{pr.number}</Text>
           </Text>
           <Text>
             <Text color={state.color} bold>
