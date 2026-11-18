@@ -88,18 +88,19 @@ async function lookUp($: EngineInterface) {
       return
     }
     const branch = head.stdout.trim()
-    if (branch === 'HEAD') {
-      await setView($, { kind: 'none', branch, reason: 'Detached HEAD: no branch to look up.' })
-      return
-    }
+    const isDetached = branch === 'HEAD'
 
-    let found = await fetchPr($, branch, cwd)
+    let found: Awaited<ReturnType<typeof fetchPr>> = isDetached
+      ? { error: 'Detached HEAD: no branch to look up.' }
+      : await fetchPr($, branch, cwd)
     if ('error' in found) {
-      // gt finds only open PRs by branch: keep showing the one this branch had
-      // once it is merged or closed, as the GitHub pane does.
+      // Like the GitHub pane, stay on the session's PR once there is one: gt
+      // finds only open PRs by branch, and the checkout may since have moved
+      // (merged, detached, switched to the base branch).
       const seen = await read($, lastSeen)
-      if (seen.branch === branch && seen.number > 0) {
-        found = await fetchPr($, String(seen.number), cwd)
+      if (seen.number > 0) {
+        const again = await fetchPr($, String(seen.number), cwd)
+        if ('pr' in again) found = again
       }
     }
     if ('error' in found) {
@@ -117,7 +118,7 @@ async function lookUp($: EngineInterface) {
     }
 
     const pr = found.pr
-    await update($, lastSeen, () => ({ branch, number: pr.number }))
+    await update($, lastSeen, () => ({ branch: pr.head, number: pr.number }))
 
     let checks: GiteaCheck[] = []
     const ranChecks = await gt(
