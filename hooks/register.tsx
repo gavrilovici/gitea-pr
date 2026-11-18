@@ -134,7 +134,9 @@ async function lookUp($: EngineInterface) {
 
     if (pr.state === 'open' && (await read($, autoOpened)) !== pr.number) {
       await update($, autoOpened, () => pr.number)
-      void $.ui.open({ id: PANE, title: `${TITLE} #${pr.number}` })
+      // Unasked, start small: on the desktop app a widget, which the person can
+      // keep in the session rail; /gitea-pr opens the full pane.
+      void $.ui.open({ id: PANE, title: `${TITLE} #${pr.number}`, placement: 'widget' })
     }
   } catch (error) {
     await setView($, {
