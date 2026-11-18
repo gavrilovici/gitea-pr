@@ -41,7 +41,20 @@ In the desktop app, where `/plugin` does not run: click **+** next to the prompt
 
 ## How it works
 
-The mod is a hooks module (`hooks/register.tsx`). It reads the branch with `git`, then the PR and its checks with `gt pr view` and `gt pr checks`, and draws them in a pane. It sends nothing anywhere itself: every request to Gitea is one `gt` makes with your own login.
+The mod is a hooks module (`hooks/register.tsx`), plain readable TypeScript. It draws a pane and runs these commands in the session's folder, and nothing else:
+
+- `git rev-parse --abbrev-ref HEAD`, to read the current branch
+- `gt pr view <branch or number> --json …`, to read the pull request
+- `gt pr checks <number> --json …`, to read its checks
+- `gt pr merge <number> --match-head-commit <sha> --no-input`, only after you press **Merge…** and then **Confirm merge**
+
+It also watches the Bash commands Claude runs, only to notice a `git push`, `git checkout`, `gt pr …` and similar, so it can refresh. It never changes or blocks them.
+
+### Data
+
+- **Sent:** the mod makes no network requests itself. Every request to Gitea is one `gt` makes to the Gitea instance you signed it in to, with your own login.
+- **Read:** the PR's title, branches, state, checks, reviewer names and review states, as your Gitea account can see them.
+- **Kept:** only what the pane shows, in the session's own state. The mod writes no files and keeps nothing across sessions.
 
 ## License
 
