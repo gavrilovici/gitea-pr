@@ -343,7 +343,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Text bold>
             <Link href={pr.url}>
-              <Text color="text" bold>
+              <Text color="text" bold hover={{ scope: 'pr-title', color: 'text', underline: true }}>
                 {pr.title}
               </Text>
             </Link> <Text dimColor>#{pr.number}</Text>
