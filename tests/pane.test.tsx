@@ -66,6 +66,9 @@ test('the pane shows the branch PR with its checks', async ($, on) => {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /1 pending, 1 passed/ }))?.text).toBe('1 pending, 1 passed')
     expect(await ui.find({ key: 'merge' })).toBeTruthy()
+    const title = await ui.find({ type: 'Link', text: /Add a login page/ })
+    expect(title?.props.href).toBe(PR.url)
+    expect(await ui.find({ type: 'Link', text: /Open in Gitea/ })).toBeUndefined()
     await ui.unmount()
   }
 })

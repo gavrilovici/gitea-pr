@@ -4,11 +4,11 @@ A Claude Code mod that shows the [Gitea](https://about.gitea.com) pull request o
 
 The pane shows:
 
-- the PR's title, number and state (open, draft, merged, closed) and which branch merges into which
+- the PR's title (a link to it in Gitea), number and state (open, draft, merged, closed) and which branch merges into which
 - each CI check (Gitea Actions or any commit status) with a link to its run, and a summary line
 - the review decision and each reviewer's latest review, plus the comment count
 - whether it merges without conflicts
-- **Open in Gitea**, **Refresh**, and **Merge…** (asks you to confirm, and merges only if nobody pushed since the pane loaded the PR)
+- **Refresh** and **Merge…** (asks you to confirm, and merges only if nobody pushed since the pane loaded the PR)
 
 Minimized to a widget on the desktop app, it shows one line: title, state and checks.
 

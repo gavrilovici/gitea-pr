@@ -342,7 +342,7 @@ export const register: Register = on => {
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
           <Text bold>
-            {pr.title} <Text dimColor>#{pr.number}</Text>
+            <Link href={pr.url}>{pr.title}</Link> <Text dimColor>#{pr.number}</Text>
           </Text>
           <Text>
             <Text color={state.color} bold>
@@ -397,7 +397,6 @@ export const register: Register = on => {
         )}
 
         <Box flexDirection="row" gap={1} flexWrap="wrap">
-          <Link href={pr.url} label="Open in Gitea" />
           {refreshButton}
           {canMerge && merging.kind !== 'confirm' && merging.kind !== 'running' && (
             <Button key="merge" variant="primary" onPress={() => void update($, merge, () => ({ kind: 'confirm' }) as GiteaMerge)}>
