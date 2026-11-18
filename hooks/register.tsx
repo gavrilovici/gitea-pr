@@ -20,6 +20,15 @@ const lastSeen = atom(
   { branch: '', number: 0 },
   { shape: 'seen-1' },
 )
+// The other worktree of the session's repository that Claude last worked in
+// ('' for none): commands run as `cd <worktree> && …` leave the session's own
+// folder where it was, on a branch that may not be the one being worked on.
+const workDir = atom({ plugin: 'gitea-pr', key: 'workDir' } as const, '', { shape: 'workdir-1' })
+const pinned = atom(
+  { plugin: 'gitea-pr', key: 'pinned' } as const,
+  { number: 0, url: '' },
+  { shape: 'pin-1' },
+)
 
 // gt may not be on the PATH the app hands the session.
 const GT_CANDIDATES = ['gt', '/opt/homebrew/bin/gt', '/usr/local/bin/gt']
@@ -30,11 +39,85 @@ const PR_JQ =
   ' headSha: .head_sha, url, author, comments, reviewDecision: (.review_decision // ""),' +
   ' reviews: [(.reviews // [])[] | {author, state, stale}]}'
 // Bash commands after which the PR likely changed.
-const TRIGGER = /\b(git\s+(push|checkout|switch|pull|merge|rebase|reset)|gt\s+(pr|api))\b/
+// Options may sit between the program and its subcommand (`git -C <dir> push`).
+const TRIGGER = /\b(git\b[^|;&\n]*?\b(push|checkout|switch|pull|merge|rebase|reset)|gt\b[^|;&\n]*?\b(pr|api))\b/
+// Bash commands whose output names the PR the session works on: `gt pr create`
+// prints the new PR's link, and Gitea answers a push to a branch that has an
+// open PR with "Visit the existing pull request: <link>".
+const BINDS = /\b(git\b[^|;&\n]*?\bpush|gt\b[^|;&\n]*?\bpr\s+create)\b/
+const PR_URL = /https?:\/\/[^\s'"<>()[\]]+?\/pulls\/(\d+)(?!\d)/g
 
 let gtPath: string | undefined
 let running: Promise<void> | undefined
+let rerun = false
 let tick = 0
+
+/** The one PR a command's output links to, if it links to exactly one. */
+function prFromOutput(text: string): { number: number; url: string } | undefined {
+  const found = new Map<string, number>()
+  for (const m of text.matchAll(PR_URL)) found.set(m[0], Number(m[1]))
+  const [only] = found
+  if (found.size !== 1 || !only) return undefined
+  return { number: only[1], url: only[0] }
+}
+
+function outputOf(ran: unknown): string {
+  const r = ran as { result?: { stdout?: unknown; stderr?: unknown }; text?: unknown }
+  const parts = [r.result?.stdout, r.result?.stderr].filter((s): s is string => typeof s === 'string')
+  if (parts.length > 0) return parts.join('\n')
+  return typeof r.text === 'string' ? r.text : ''
+}
+
+// Folders a command moves into: `cd <dir>`, `pushd <dir>` or `git -C <dir>`.
+const DIRS = /(?:^|[;&|(]\s*)(?:cd|pushd)\s+('[^']*'|"[^"]*"|[^\s;&|)]+)|\bgit\s+-C\s+('[^']*'|"[^"]*"|[^\s;&|)]+)/g
+
+function dirsOf(command: string): string[] {
+  const dirs: string[] = []
+  for (const m of command.matchAll(DIRS)) {
+    const raw = m[1] ?? m[2] ?? ''
+    const dir = raw.replace(/^(['"])(.*)\1$/, '$2')
+    // Skip what a shell would expand: `~`, `$VAR`, `-`.
+    if (dir && !/^[~$-]/.test(dir)) dirs.push(dir)
+  }
+  return dirs
+}
+
+/** A checkout's own folder and its repository's shared git folder, absolute. */
+async function gitRoots($: EngineInterface, cwd: string) {
+  try {
+    const ran = await $.process.run(
+      ['git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+      { cwd, timeoutMs: 5000 },
+    )
+    const [top, common] = ran.stdout.trim().split('\n')
+    return ran.exitCode === 0 && top && common ? { top, common } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Notes the last of a command's folders that is another worktree of the
+ * session's repository; says whether that changed the folder the pane reads.
+ */
+async function noteWorktree($: EngineInterface, command: string): Promise<boolean> {
+  const dirs = dirsOf(command)
+  if (dirs.length === 0) return false
+  const cwd = await $.session.cwd()
+  const home = await gitRoots($, cwd)
+  if (!home) return false
+  for (const dir of dirs.reverse()) {
+    const there = await gitRoots($, dir.startsWith('/') ? dir : `${cwd}/${dir}`)
+    if (!there || there.common !== home.common || there.top === home.top) continue
+    if ((await read($, workDir)) === there.top) return false
+    await update($, workDir, () => there.top)
+    return true
+  }
+  return false
+}
+
+const sameUrl = (a: string, b: string) =>
+  a.replace(/\/+$/, '').toLowerCase() === b.replace(/\/+$/, '').toLowerCase()
 
 async function gt($: EngineInterface, args: string[], cwd: string, timeoutMs = 20000) {
   const tries = gtPath ? [gtPath] : GT_CANDIDATES
@@ -68,9 +151,19 @@ async function fetchPr(
   return { pr: JSON.parse(ran.stdout) as GiteaPr }
 }
 
-// One lookup at a time: a refresh asked while one runs waits for that one.
+// One lookup at a time. A refresh asked while one runs makes it look again once
+// done, since what it asked for (a new pin, a push) may have come too late.
 function refresh($: EngineInterface): Promise<void> {
-  running ??= lookUp($).finally(() => {
+  if (running) {
+    rerun = true
+    return running
+  }
+  running = (async () => {
+    do {
+      rerun = false
+      await lookUp($)
+    } while (rerun)
+  })().finally(() => {
     running = undefined
   })
   return running
@@ -78,21 +171,41 @@ function refresh($: EngineInterface): Promise<void> {
 
 async function lookUp($: EngineInterface) {
   try {
-    const cwd = await $.session.cwd()
-    const head = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd,
-      timeoutMs: 5000,
-    })
-    if (head.exitCode !== 0) {
+    // Read in the worktree Claude works in. Once that is gone its branch is
+    // unknown, as on a detached checkout, never the session folder's branch.
+    let cwd = await $.session.cwd()
+    const worktree = await read($, workDir)
+    const head = await $.process
+      .run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: worktree || cwd, timeoutMs: 5000 })
+      .catch(() => undefined)
+    const isGone = worktree !== '' && head?.exitCode !== 0
+    if (worktree && !isGone) cwd = worktree
+    if (!isGone && head?.exitCode !== 0) {
       await setView($, { kind: 'none', branch: '', reason: 'This folder is not a git repository.' })
       return
     }
-    const branch = head.stdout.trim()
+    const branch = isGone ? '' : (head?.stdout.trim() ?? '')
     const isDetached = branch === 'HEAD'
 
-    let found: Awaited<ReturnType<typeof fetchPr>> = isDetached
-      ? { error: 'Detached HEAD: no branch to look up.' }
-      : await fetchPr($, branch, cwd)
+    // The session's own PR comes first: its folder may be a checkout on some
+    // other branch (the work done in a worktree), whose PR is not the session's.
+    let found: Awaited<ReturnType<typeof fetchPr>> | undefined
+    const pin = await read($, pinned)
+    if (pin.number > 0) {
+      const byPin = await fetchPr($, String(pin.number), cwd)
+      // Same number, same link: the folder is in the pinned PR's repository.
+      if ('pr' in byPin && sameUrl(byPin.pr.url, pin.url)) found = byPin
+      if ('error' in byPin) {
+        // A failed read (offline, gt timed out) keeps the pinned PR on show.
+        const now = await read($, view)
+        if (now.kind === 'pr' && sameUrl(now.pr.url, pin.url)) return
+      }
+    }
+    found ??= isGone
+      ? { error: `The worktree ${worktree} is gone: no branch to look up.` }
+      : isDetached
+        ? { error: 'Detached HEAD: no branch to look up.' }
+        : await fetchPr($, branch, cwd)
     if ('error' in found) {
       // Like the GitHub pane, stay on the session's PR once there is one: gt
       // finds only open PRs by branch, and the checkout may since have moved
@@ -105,7 +218,7 @@ async function lookUp($: EngineInterface) {
     }
     if ('error' in found) {
       const message = found.error.replace(/^Error:\s*/, '')
-      const isNone = /no open pull request|repository required|not a gitea|no gitea|unknown host|no login/i.test(
+      const isNone = /no open pull request|no branch to look up|repository required|not a gitea|no gitea|unknown host|no login/i.test(
         message,
       )
       await setView(
@@ -153,7 +266,7 @@ async function runMerge($: EngineInterface) {
   if (now.kind !== 'pr') return
   await update($, merge, () => ({ kind: 'running' }) as GiteaMerge)
   try {
-    const cwd = await $.session.cwd()
+    const cwd = (await read($, workDir)) || (await $.session.cwd())
     const ran = await gt(
       $,
       [
@@ -254,7 +367,8 @@ export const register: Register = on => {
     const started = await next(e)
     await $.command.register({
       name: 'gitea-pr',
-      description: 'Show the Gitea pull request of the current branch in a pane',
+      description: "Show the session's Gitea pull request in a pane; a number makes it that PR",
+      argumentHint: '[pr number]',
     })
     timer?.cancel()
     // Every 15 s while checks are pending or a merge runs, else every minute.
@@ -273,15 +387,38 @@ export const register: Register = on => {
     return started
   })
 
-  on('command.run', { command: 'gitea-pr' }, async $ => {
+  on('command.run', { command: 'gitea-pr' }, async ($, e) => {
+    const asked = /^#?(\d+)$/.exec(e.args.trim())?.[1]
+    if (asked) {
+      const found = await fetchPr($, asked, (await read($, workDir)) || (await $.session.cwd()))
+      if ('error' in found) {
+        return { text: `Could not read PR #${asked}: ${found.error.replace(/^Error:\s*/, '')}` }
+      }
+      await update($, pinned, () => ({ number: found.pr.number, url: found.pr.url }))
+    }
     await $.ui.open({ id: PANE, title: TITLE })
     await refresh($)
-    return { text: 'Gitea PR pane opened.' }
+    return { text: asked ? `Gitea PR pane opened on #${asked}.` : 'Gitea PR pane opened.' }
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    if (TRIGGER.test(e.command)) void refresh($)
+    let changed = await noteWorktree($, e.command)
+    // Claude switching branch in the session's own folder works there again.
+    if (/\bgit\s+(checkout|switch)\b/.test(e.command) && dirsOf(e.command).length === 0) {
+      if ((await read($, workDir)) !== '') {
+        await update($, workDir, () => '')
+        changed = true
+      }
+    }
+    if (BINDS.test(e.command)) {
+      const pr = prFromOutput(outputOf(ran))
+      if (pr) {
+        await update($, pinned, () => pr)
+        changed = true
+      }
+    }
+    if (changed || TRIGGER.test(e.command)) void refresh($)
     return ran
   }).catch(($, e, next) => next(e))
 

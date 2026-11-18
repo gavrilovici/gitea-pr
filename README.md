@@ -12,7 +12,15 @@ The pane shows:
 
 Minimized to a widget on the desktop app, it shows one line: title, state and checks.
 
-It opens by itself when your branch has an open PR, and stays closed for that PR once you close it. `/gitea-pr` opens it any time. After a merge it keeps showing the PR as merged.
+It shows the session's own PR, picked in this order:
+
+1. The PR Claude opened with `gt pr create`, or last pushed to. `/gitea-pr 16` makes it PR #16 instead.
+2. The PR of the branch in the worktree Claude works in. A session whose folder is the main checkout often works in another worktree of the same repository, with commands like `cd <worktree> && …` or `git -C <worktree> …`. The pane follows the last such worktree, and goes back to the session's folder once Claude runs `git checkout` or `git switch` there.
+3. The PR of the session folder's current branch.
+
+When none of these has a PR (the branch was merged, the checkout is detached, the worktree was removed), it keeps showing the last PR it showed.
+
+It opens by itself when that PR is open, and stays closed for that PR once you close it. `/gitea-pr` opens it any time. After a merge it keeps showing the PR as merged.
 
 It refreshes when the session starts, every minute (every 15 seconds while checks are running), and right after Claude runs `git push`, `git checkout`, `gt pr …` and similar commands.
 
@@ -44,11 +52,12 @@ In the desktop app, where `/plugin` does not run: click **+** next to the prompt
 The mod is a hooks module (`hooks/register.tsx`), plain readable TypeScript. It draws a pane and runs these commands in the session's folder, and nothing else:
 
 - `git rev-parse --abbrev-ref HEAD`, to read the current branch
+- `git rev-parse --path-format=absolute --show-toplevel --git-common-dir`, in a folder a Bash command of Claude's moved into, to tell whether it is another worktree of the session's repository
 - `gt pr view <branch or number> --json …`, to read the pull request
 - `gt pr checks <number> --json …`, to read its checks
 - `gt pr merge <number> --match-head-commit <sha> --no-input`, only after you press **Merge…** and then **Confirm merge**
 
-It also watches the Bash commands Claude runs, only to notice a `git push`, `git checkout`, `gt pr …` and similar, so it can refresh. It never changes or blocks them.
+It also watches the Bash commands Claude runs, only to notice a `git push`, `git checkout`, `gt pr …` and similar, so it can refresh. After a `git push` or `gt pr create`, it reads the command's output for the link to the PR (Gitea answers a push to a branch with an open PR with that link). It never changes or blocks them.
 
 ### Data
 

@@ -58,6 +58,13 @@ declare module 'claude-code' {
       autoOpened: Shaped<number>
       /** The branch and PR number last seen, so a merged PR stays on show. */
       lastSeen: Shaped<{ branch: string; number: number }>
+      /** The other worktree of the session's repository Claude last worked in ('' for none). */
+      workDir: Shaped<string>
+      /**
+       * The session's own PR (0: none): the one Claude opened or pushed to, or
+       * the one `/gitea-pr <number>` named. Shown before the checkout's branch.
+       */
+      pinned: Shaped<{ number: number; url: string }>
     }
   }
 }

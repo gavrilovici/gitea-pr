@@ -1,6 +1,6 @@
 {
   "name": "gitea-pr",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A pane showing the Gitea pull request of the current branch: state, CI checks, reviews, mergeability, with refresh, open and merge.",
   "author": { "name": "gavrilovici", "url": "https://github.com/gavrilovici" },
   "homepage": "https://github.com/gavrilovici/gitea-pr",
