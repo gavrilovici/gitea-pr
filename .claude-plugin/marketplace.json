@@ -1,0 +1,12 @@
+{
+  "name": "gitea-pr",
+  "description": "A Claude Code mod that shows your branch's Gitea pull request in a pane.",
+  "owner": { "name": "gavrilovici", "url": "https://github.com/gavrilovici" },
+  "plugins": [
+    {
+      "name": "gitea-pr",
+      "source": "./",
+      "description": "A pane showing the Gitea pull request of the current branch: state, CI checks, reviews, mergeability, with refresh, open and merge."
+    }
+  ]
+}
